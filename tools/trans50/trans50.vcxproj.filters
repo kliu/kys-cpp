@@ -18,12 +18,6 @@
     <ClCompile Include="trans50.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="transk.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="main.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\mlcc\PotConv.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -34,9 +28,6 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\GrpIdxFile.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="lua2cifa.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

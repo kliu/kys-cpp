@@ -1,8 +1,8 @@
-﻿// transk.cpp — 将 kdef 二进制指令流翻译为 Lua 文本
+﻿// transk.cpp — 将 kdef 二进制指令流直接翻译为 Cifa 文本
 //
 // kdef 存储的是定长指令流，每条指令由 ins.length 个 int16 组成。
 // ini 文件记录各指令的属性（名称/长度/跳转偏移/是否条件跳）。
-// transk() 输入整条指令流，输出可人读 Lua 脚本字符串。
+// transk() 输入整条指令流，输出可读的 Cifa 脚本文本。
 
 #include <iostream>
 #include <map>
@@ -118,7 +118,7 @@ void init_ins(std::string ini_file, std::string talkfile)
     }
 }
 
-// 将一个事件的指令流（int16 数组）翻译为 Lua 文本。
+// 将一个事件的指令流（int16 数组）翻译为 Cifa 文本。
 // lines 是以指令入口位置为 key 的有序 map；
 // 条件跳转目标位置用 "当前位置 + 偏移 - 0.5" 作为 key 插入标签，
 // 确保标签行排列在被跳转指令之前。
@@ -128,11 +128,26 @@ std::string transk(std::vector<int> e)
     // key 为指令入口字节位置；条件跳转标签用位置 - 0.5 的 double 键插入，
     // 这样标签行在迭代时自然排列在目标指令入口行之前
     std::map<double, std::string> lines;    //索引为指令的位置，方便处理偏移
+    std::map<int, std::string> parameterPatches;
     while (i < e.size())
     {
         i_line++;
         int ins_id = e[i];
         auto& ins = ins_[ins_id];
+
+        // 50/32 writes x[e2] into a word after this 50 instruction. Resolve
+        // fixed target positions while the original kdef word offsets exist,
+        // so the target instruction is emitted directly as Cifa.
+        if (ins.id == 50 && e[i + 1] == 32 && (e[i + 2] & 1) == 0)
+        {
+            const int targetOffset = e[i + 4];
+            if (targetOffset > 0)
+            {
+                parameterPatches[i + 8 + targetOffset] = std::format("x[{}]", e[i + 3]);
+                i += ins.length;
+                continue;
+            }
+        }
 
         std::string str = ins.name;
         int is_bool = ins.is_bool;
@@ -141,7 +156,7 @@ std::string transk(std::vector<int> e)
 
         if (ins.id == 50 && e[i + 1] > 128)
         {
-            str = "if CheckHave5Item($0, $1, $2, $3, $4) == bool then goto label$x end;";
+            str = "if (CheckHave5Item($0, $1, $2, $3, $4) == bool) goto label$x;";
             is_bool = 1;
             jump1_index = 6;
             jump2_index = 7;
@@ -173,7 +188,7 @@ std::string transk(std::vector<int> e)
             else
             {
                 strfunc::replaceAllSubStringRef(str, " == bool", "");
-                strfunc::replaceAllSubStringRef(str, "end", "else goto label$y end");
+                str += " goto label$y;";
                 jump = e[i + jump1_index];
                 jump1 = e[i + jump2_index];
             }
@@ -182,28 +197,28 @@ std::string transk(std::vector<int> e)
             std::string label;
             if (lines.contains(index))
             {
-                label = lines[index].substr(2, lines[index].length() - 4);
+                label = lines[index].substr(0, lines[index].length() - 1);
             }
             else
             {
                 label = std::format("label{}", i);
             }
             strfunc::replaceAllSubStringRef(str, "label$x", label);
-            lines[index] = "::" + label + "::";
+            lines[index] = label + ":";
             if (jump1 != 0)
             {
                 double index1 = i + ins.length + jump1 - 0.5;
                 std::string label1;
                 if (lines.contains(index1))
                 {
-                    label1 = lines[index1].substr(2, lines[index1].length() - 4);
+                    label1 = lines[index1].substr(0, lines[index1].length() - 1);
                 }
                 else
                 {
                     label1 = std::format("label{}_1", i);
                 }
                 strfunc::replaceAllSubStringRef(str, "label$y", label1);
-                lines[index1] = "::" + label1 + "::";
+                lines[index1] = label1 + ":";
             }
         }
 
@@ -223,7 +238,24 @@ std::string transk(std::vector<int> e)
 
         for (int k = 1; k < ins.length; k++)
         {
-            strfunc::replaceAllSubStringRef(str, std::format("${:x}", k - 1), std::to_string(e[i + k]));
+            const auto patch = parameterPatches.find(i + k);
+            const std::string value = patch == parameterPatches.end() ? std::to_string(e[i + k]) : patch->second;
+            strfunc::replaceAllSubStringRef(str, std::format("${:x}", k - 1), value);
+        }
+
+        if (is_bool)
+        {
+            if (e[i + jump1_index] == 0)
+            {
+                strfunc::replaceAllSubStringRef(str, "bool", "false");
+            }
+            else if (e[i + jump2_index] == 0)
+            {
+                strfunc::replaceAllSubStringRef(str, " == bool", "");
+            }
+            else
+            {
+            }
         }
 
         lines[i] = str;

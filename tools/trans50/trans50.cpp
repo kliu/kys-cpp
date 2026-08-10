@@ -1,502 +1,306 @@
-﻿// trans50.cpp — 将 Lua 脚本中的 instruct_50 调用展开为可读的 Lua 语句
-//
-// DOS 版完全依赖内置指令系统，自定义指令均以 instruct_50(code, e1..e6) 形式出现。
-// trans50() 识别这些行并将其替换为对应的 Lua 表达式，保留原注释。
-
-#include <iostream>
-
-#include "filefunc.h"
 #include "strfunc.h"
+#include <algorithm>
 #include <format>
-#include <map>
-#include <print>
 #include <string>
 #include <vector>
 
 extern std::vector<std::string> talks_;
 
-std::string trans50(std::string str)
+std::string trans50(std::string source)
 {
-    std::string result;
+    strfunc::replaceAllSubStringRef(source, "\r", "");
+    const std::vector<std::string> lines = strfunc::splitString(source, "\n", false);
+    std::vector<std::string> outputLines;
 
-    strfunc::replaceAllSubStringRef(str, "\r", "");
-    std::vector<std::string> lines = strfunc::splitString(str, "\n", false);
-
-    int next_parameter = -1;
-    // e_GetValue: 根据类型位 t 的第 bit 位判断 x 是直接常数还是数组索引
-    //   位为 0 → 返回字符串形式的数字（常量）
-    //   位为 1 → 返回 "x[x]" 形式（变量引用）
-    auto e_GetValue = [&next_parameter](int bit, int t, int x) -> std::string
+    auto value = [](int bit, int flags, int value) -> std::string
     {
-        int i = t & (1 << bit);
-        if (i == 0)
-        {
-            return std::to_string(x);
-        }
-        else
-        {
-            return std::format("x[{}]", x);
-        }
+        return flags & (1 << bit) ? std::format("x[{}]", value) : std::to_string(value);
     };
-    auto is_number = [](int bit, int t, int x)
+    auto is_constant = [](int bit, int flags)
     {
-        return (t & (1 << bit)) == 0;
+        return (flags & (1 << bit)) == 0;
     };
-    // talks_ 已由 transk.cpp 的 init_ins() 加载，这里取引用避免拷贝
-    //读对话
-    std::vector<std::string>& talk_contents = talks_;
 
-    for (auto& line : lines)
+    for (const auto& line : lines)
     {
-        std::string str = line;
-        if (line.find("instruct_50") != std::string::npos)
+        std::string output = line;
+        const size_t instruction = line.find("instruct_50");
+        if (instruction != std::string::npos)
         {
-            auto pos = line.find("instruct_50");
-            auto nums = strfunc::findNumbers<int>(line.substr(pos + 12));
-            if (nums.size() >= 7)
+            constexpr std::string_view dynamicCodePrefix = "instruct_50e(x[";
+            const size_t dynamicCodeStart = line.find(dynamicCodePrefix);
+            if (dynamicCodeStart != std::string::npos)
             {
-                if (next_parameter >= 1 && next_parameter <= nums.size())
+                const size_t dynamicCodeEnd = line.find(']', dynamicCodeStart + dynamicCodePrefix.size());
+                const auto arguments = dynamicCodeEnd == std::string::npos
+                    ? std::vector<int>()
+                    : strfunc::findNumbers<int>(line.substr(dynamicCodeEnd + 1));
+                if (arguments.size() >= 6)
                 {
-                    nums[next_parameter - 1] = 9999999;
-                    next_parameter = -1;
+                    const std::string dynamicCode = line.substr(dynamicCodeStart + dynamicCodePrefix.size(), dynamicCodeEnd - dynamicCodeStart - dynamicCodePrefix.size());
+                    output = std::format("switch (x[{}]) {{\n", dynamicCode);
+                    for (int code = 0; code <= 56; ++code)
+                    {
+                        // These subcommands interpret e2 as a table selector or
+                        // a talk index. An invalid branch is a no-op in the
+                        // original dispatcher, and must not be expanded just
+                        // because another runtime code may be selected.
+                        if ((code == 8 && (arguments[1] < 0 || arguments[1] >= talks_.size())) ||
+                            ((code == 16 || code == 17 || code == 27) && (arguments[1] < 0 || arguments[1] > 4)))
+                        {
+                            continue;
+                        }
+                        const std::string branch = trans50(std::format("instruct_50e({}, {}, {}, {}, {}, {}, {});", code,
+                            arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5]));
+                        // A subcommand with invalid selector arguments leaves
+                        // its source text unchanged. Its runtime behavior is a
+                        // no-op, so omit that switch branch instead of nesting
+                        // a residual legacy call.
+                        if (!branch.empty() && !branch.contains("instruct_50"))
+                        {
+                            output += std::format("case {}: {{ {} break; }}\n", code, branch);
+                        }
+                    }
+                    output += "default: break;\n}";
                 }
-                int code = nums[0];
-                int e1 = nums[1];
-                int e2 = nums[2];
-                int e3 = nums[3];
-                int e4 = nums[4];
-                int e5 = nums[5];
-                int e6 = nums[6];
+            }
+
+            auto numbers = strfunc::findNumbers<int>(line.substr(instruction + 12));
+            if (dynamicCodeStart == std::string::npos && numbers.size() >= 7)
+            {
+                const int code = numbers[0];
+                const int flags = numbers[1];
+                int e2 = numbers[2];
+                int e3 = numbers[3];
+                int e4 = numbers[4];
+                int e5 = numbers[5];
+                int e6 = numbers[6];
 
                 switch (code)
                 {
-                case 0:    // 常量赋値： x[e1] = e2
-                    str = std::format("x[{}] = {};", e1, e2);
+                case 0: output = std::format("x[{}] = {};", flags, e2); break;
+                case 1:
+                    output = std::format("x[{} + {}] = {};", e3, value(0, flags, e4), value(1, flags, e5));
+                    if (e2) { output += std::format(" x[{} + {}] &= 255;", e3, value(0, flags, e4)); }
                     break;
-                case 1:    // 数组写： x[e3 + e4] = e5
-                    str = std::format("x[{} + {}] = {};", e3, e_GetValue(0, e1, e4), e_GetValue(1, e1, e5));
+                case 2:
+                    output = std::format("x[{}] = x[{} + {}];", e5, e3, value(0, flags, e4));
+                    if (e2) { output += std::format(" x[{}] &= 255;", e5); }
                     break;
-                case 2:    // 数组读： x[e5] = x[e3 + e4]
-                    str = std::format("x[{}] = x[{}+ {}];", e5, e3, e_GetValue(0, e1, e4));
-                    break;
-                case 3:    // 算数运算： x[e3] = x[e4] op e5（e2=0~4：+-*/%，e2=5：无符号除）
-                {
-                    std::string op = "+-*/%";
+                case 3:
                     if (e2 >= 0 && e2 <= 4)
                     {
-                        str = std::format("x[{}] = x[{}] {} {};", e3, e4, op[e2], e_GetValue(0, e1, e5));
+                        static constexpr char operators[] = "+-*/%";
+                        output = std::format("x[{}] = x[{}] {} {};", e3, e4, operators[e2], value(0, flags, e5));
                     }
                     else if (e2 == 5)
                     {
-                        str = std::format("x[{}] = uint(x[{}]) / {};", e3, e4, e_GetValue(0, e1, e5));
+                        output = std::format("x[{}] = x[{}] / {};", e3, e4, value(0, flags, e5));
                     }
                     break;
-                }
-                case 4:    // 比较运算，结果存入 jump_flag（e2=0~5：< <= == ~= >= >；e2=6/7：常量 true/false）
-                {
-                    std::vector<std::string> op = { "<", "<=", "==", "~=", ">=", ">" };
+                case 4:
                     if (e2 >= 0 && e2 <= 5)
                     {
-                        str = std::format("if x[{}] {} {} then jump_flag = true; else jump_flag = false; end;", e3, op[e2], e_GetValue(0, e1, e4));
+                        static const std::vector<std::string> operators = { "<", "<=", "==", "!=", ">=", ">" };
+                        output = std::format("x[28672] = !(x[{}] {} {});", e3, operators[e2], value(0, flags, e4));
                     }
                     else if (e2 == 6)
                     {
-                        str = "jump_flag = true;";
+                        output = "x[28672] = false;";
                     }
                     else if (e2 == 7)
                     {
-                        str = "jump_flag = false;";
+                        output = "x[28672] = true;";
                     }
                     break;
-                }
-                case 5:    // 清空 x[0..30000]
-                {
-                    str = "for i=0, 30000 do x[i]=0; end;";
+                case 5: output = "for (int i = 0; i <= 30000; i++) { x[i] = 0; }"; break;
+                case 6:
+                case 7:
+                case 13:
+                case 14:
+                case 15:
+                case 28:
+                case 29:
+                case 30:
+                case 31:
+                case 44:
+                case 45:
+                case 46:
+                case 47:
+                case 48:
+                case 49:
+                case 50:
+                case 51:
+                case 53:
+                case 54:
+                case 55:
+                case 56:
+                    output.clear();
                     break;
-                }
-                case 6: break;    // 无操作
-                case 7: break;    // 无操作
-                case 8:           // 加载对话内容到字符串变量
-                {
-                    if (is_number(0, e1, e2))
+                case 8:
+                    if (is_constant(0, flags))
                     {
-                        str = std::format("x[{}] = \"{}\";", e3, talk_contents[e2]);
+                        output = std::format("x[{}] = \"{}\";", e3, talks_[e2]);
                     }
                     else
                     {
-                        str = std::format("x[{}] = GetTalk({});", e3, e_GetValue(0, e1, e2));
+                        output = std::format("x[{}] = GetTalk({});", e3, value(0, flags, e2));
                     }
                     break;
-                }
-                case 9:    // 字符串格式化（string.format）
+                case 9: output = std::format("x[{}] = sprintf(x[{}], {});", e2, e3, value(0, flags, e4)); break;
+                case 10: output = std::format("x[{}] = DrawLength(x[{}]);", e2, flags); break;
+                case 11: output = std::format("x[{}] = x[{}] + x[{}];", e3, flags, e2); break;
+                case 12: output = std::format("x[{}] = sprintf(\"%-*s\", {}, \"\");", e2, value(0, flags, e3)); break;
+                case 16:
                 {
-                    str = std::format("x[{}] = string.format(x[{}], {});", e2, e3, e_GetValue(0, e1, e4));
+                    static const std::vector<std::string> names = { "Role", "Item", "SubmapInfo", "Magic", "Shop" };
+                    output = std::format("Set{}({}, {} / 2, {});", names[e2], value(0, flags, e3), value(1, flags, e4), value(2, flags, e5));
                     break;
                 }
-                case 10:    // 计算字符串实际显示宽度
+                case 17:
                 {
-                    str = std::format("x[{}] = DrawLength(x[{}]);", e2, e1);
+                    static const std::vector<std::string> names = { "Role", "Item", "SubmapInfo", "Magic", "Shop" };
+                    output = std::format("x[{}] = Get{}({}, {} / 2);", e5, names[e2], value(0, flags, e3), value(1, flags, e4));
                     break;
                 }
-                case 11:    // 字符串拼接
+                case 18: output = std::format("SetTeam({}, {});", value(0, flags, e2), value(1, flags, e3)); break;
+                case 19: output = std::format("x[{}] = GetTeam({});", e3, value(0, flags, e2)); break;
+                case 20: output = std::format("x[{}] = GetItemAmount({});", e3, value(0, flags, e2)); break;
+                case 21: output = std::format("SetD({}, {}, {}, {});", value(0, flags, e2), value(1, flags, e3), value(2, flags, e4), value(3, flags, e5)); break;
+                case 22: output = std::format("x[{}] = GetD({}, {}, {});", e5, value(0, flags, e2), value(1, flags, e3), value(2, flags, e4)); break;
+                case 23: output = std::format("SetS({}, {}, {}, {}, {});", value(0, flags, e2), value(1, flags, e3), value(2, flags, e4), value(3, flags, e5), value(4, flags, e6)); break;
+                case 24: output = std::format("x[{}] = GetS({}, {}, {}, {});", e6, value(0, flags, e2), value(1, flags, e3), value(2, flags, e4), value(3, flags, e5)); break;
+                case 25:
+                case 26:
+                    output.clear();
+                    break;
+                case 27:
                 {
-                    str = std::format("x[{}] = x[{}]..x[{}];", e3, e1, e2);
+                    static const std::vector<std::string> names = { "Role", "Item", "Submap", "Magic", "Shop" };
+                    output = std::format("x[{}] = Get{}Name({});", e4, names[e2], value(0, flags, e3));
                     break;
                 }
-                case 12:    // 生成指定宽度的空格字符串
-                {
-                    str = std::format("x[{}] = string.rep(\" \", {});", e2, e_GetValue(0, e1, e3));
+                case 32:
+                    output.clear();
                     break;
-                }
-                case 16:    // 设置游戏对象属性（角色/物品/子场景/武功/商店）
-                {
-                    std::vector<std::string> names = { "Role", "Item", "SubmapInfo", "Magic", "Shop" };
-                    str = std::format("Set{}({}, {} / 2, {});", names[e2], e_GetValue(0, e1, e3), e_GetValue(1, e1, e4), e_GetValue(2, e1, e5));
+                case 33: output = std::format("DrawString(x[{}], {}, {}, {});", e2, value(0, flags, e3), value(1, flags, e4), value(2, flags, e5)); break;
+                case 34: output = std::format("DrawRect({}, {}, {}, {});", value(0, flags, e2), value(1, flags, e3), value(2, flags, e4), value(3, flags, e5)); break;
+                case 35: output = std::format("x[{}] = GetKey();", flags); break;
+                case 36: output = std::format("x[28672] = showmessage(x[{}], {}, {}, {});", e2, value(0, flags, e3), value(1, flags, e4), value(2, flags, e5)); break;
+                case 37: output = std::format("Delay({});", value(0, flags, e2)); break;
+                case 38: output = std::format("x[{}] = random({});", e3, value(0, flags, e2)); break;
+                case 39:
+                case 40:
+                    output = std::format("strs = {{}}; for (int i = 1; i <= {}; i++) {{ strs[i] = x[x[{} + i - 1]]; }} x[{}] = menu({}, {}, strs, {});",
+                        value(0, flags, e2), e3, e4, value(1, flags, e5), value(2, flags, e6), value(0, flags, e2));
                     break;
-                }
-                case 17:    // 读取游戏对象属性
-                {
-                    std::vector<std::string> names = { "Role", "Item", "SubmapInfo", "Magic", "Shop" };
-                    str = std::format("x[{}] = Get{}({}, {} / 2);", e5, names[e2], e_GetValue(0, e1, e3), e_GetValue(1, e1, e4));
-                    break;
-                }
-                case 18:    // 设置队伍成员
-                {
-                    str = std::format("SetTeam({}, {});", e_GetValue(0, e1, e2), e_GetValue(0, e1, e3));
-                    break;
-                }
-                case 19:    // 读取队伍成员
-                {
-                    str = std::format("x[{}] = GetTeam({});", e3, e_GetValue(0, e1, e2));
-                    break;
-                }
-                case 20:    // 获取背包中物品数量
-                {
-                    str = std::format("x[{}] = GetItemAmount({});", e3, e_GetValue(0, e1, e2));
-                    break;
-                }
-                case 21:    // SetD: 写入主地图对象属性
-                {
-                    str = std::format("SetD({}, {}, {}, {});", e_GetValue(0, e1, e2), e_GetValue(1, e1, e3), e_GetValue(2, e1, e4), e_GetValue(3, e1, e5));
-                    break;
-                }
-                case 22:    // GetD: 读取主地图对象属性
-                {
-                    str = std::format("x[{}] = GetD({}, {}, {});", e5, e_GetValue(0, e1, e2), e_GetValue(1, e1, e3), e_GetValue(2, e1, e4));
-                    break;
-                }
-                case 23:    // SetS: 写入子场景对象属性
-                {
-                    str = std::format("SetS({}, {}, {}, {}, {});", e_GetValue(0, e1, e2), e_GetValue(1, e1, e3), e_GetValue(2, e1, e4), e_GetValue(3, e1, e5), e_GetValue(4, e1, e6));
-                    break;
-                }
-                case 24:    // GetS: 读取子场景对象属性
-                {
-                    str = std::format("x[{}] = GetS({}, {}, {}, {});", e6, e_GetValue(0, e1, e2), e_GetValue(1, e1, e3), e_GetValue(2, e1, e4), e_GetValue(3, e1, e5));
-                    break;
-                }
-                case 25:    // write_mem: 写入 DOS 内存地址（历史兼容指令）
-                {
-                    if (e3 < 0)
-                    {
-                        e3 += 65536;    //处理负数地址
-                    }
-                    str = std::format("write_mem(0x{:x} + {}, {});", e3 + e4 * 0x10000, e_GetValue(1, e1, e6),
-                        e_GetValue(0, e1, e5));
-                    break;
-                }
-                case 26:    // read_mem: 读取 DOS 内存地址
-                {
-                    if (e3 < 0)
-                    {
-                        e3 += 65536;    //处理负数地址
-                    }
-                    str = std::format("x[{}] = read_mem(0x{:x} + {});", e5, e3 + e4 * 0x10000, e_GetValue(0, e1, e6));
-                    break;
-                }
-                case 27:    // 获取对象名称字符串
-                {
-                    std::vector<std::string> names = { "Role", "Item", "Submap", "Magic", "Shop" };
-                    str = std::format("x[{}] = Get{}Name({});", e4, names[e2], e_GetValue(0, e1, e3));
-                    break;
-                }
-                case 32:    // 读取参数到 temp，同时记录下一条指令需替换的参数位置
-                {
-                    str = std::format("temp = x[{}];", e2);
-                    e_GetValue(0, e1, e3);
-                    next_parameter = e3;
-                    break;
-                }
-                case 33:    // DrawString: 展示文本（同时清除 next_parameter 占位符）
-                {
-                    str = std::format("DrawString(x[{}], {}, {}, {});", e2, e_GetValue(0, e1, e3), e_GetValue(1, e1, e4), e_GetValue(2, e1, e5));
-                    next_parameter = -1;
-                    break;
-                }
-                case 34:    // DrawRect: 画矩形
-                {
-                    str = std::format("DrawRect({}, {}, {}, {});", e_GetValue(0, e1, e2), e_GetValue(1, e1, e3), e_GetValue(2, e1, e4), e_GetValue(3, e1, e5));
-                    break;
-                }
-                case 35:    // 等待键盘输入
-                {
-                    str = std::format("x[{}] = GetKey();", e1);
-                    break;
-                }
-                case 36:    // 展示消息对话框，返回用户选择
-                {
-                    str = std::format("x[28672] = showmessage(x[{}], {}, {}, {});", e2, e_GetValue(0, e1, e3), e_GetValue(1, e1, e4), e_GetValue(2, e1, e5));
-                    break;
-                }
-                case 37:    // 延迟指定帧数
-                {
-                    str = std::format("Delay({});", e_GetValue(0, e1, e2));
-                    break;
-                }
-                case 38:    // 生成随机数
-                {
-                    str = std::format("x[{}] = math.random({});", e3, e_GetValue(0, e1, e2));
-                    break;
-                }
-                case 39:    // 展示选单（e2 个选项）
-                case 40:    // 展示选单（同 case 39，参数约定略有不同）
-                {
-                    str = "strs = {};\n";
-                    str += std::format("for i=1, {} do\n", e_GetValue(0, e1, e2));
-                    str += std::format("strs[i] = x[x[{} + i - 1]];\n", e3);
-                    str += "end\n";
-                    str += std::format("x[{}] = menu({}, {}, strs, #strs);", e4, e_GetValue(1, e1, e5), e_GetValue(2, e1, e6));
-                    break;
-                }
                 case 41:
-                {
-                    //画图（e2=0：主图，e2=1：头像）
-                    if (e2 == 0)
-                    {
-                        str = std::format("DrawMainImage({} / 2, {}, {});", e_GetValue(2, e1, e5), e_GetValue(0, e1, e3), e_GetValue(1, e1, e4));
-                    }
-                    else if (e2 == 1)
-                    {
-                        str = std::format("DrawHeadImage({} / 2, {}, {});", e_GetValue(2, e1, e5), e_GetValue(0, e1, e3), e_GetValue(1, e1, e4));
-                    }
+                    if (e2 == 0) { output = std::format("DrawMainImage({} / 2, {}, {});", value(2, flags, e5), value(0, flags, e3), value(1, flags, e4)); }
+                    else if (e2 == 1) { output = std::format("DrawHeadImage({} / 2, {}, {});", value(2, flags, e5), value(0, flags, e3), value(1, flags, e4)); }
                     break;
-                }
-                case 43:    // 设置事件参数并调用子事件
-                {
-                    str = std::format("x[28928] = {};\n", e_GetValue(1, e1, e3));
-                    str += std::format("x[28929] = {};\n", e_GetValue(2, e1, e4));
-                    str += std::format("x[28930] = {};\n", e_GetValue(3, e1, e5));
-                    str += std::format("x[28931] = {};\n", e_GetValue(4, e1, e6));
-                    str += std::format("CallEvent({});", e_GetValue(0, e1, e2));
+                case 42:
+                    output = std::format("SetMainMapPosition({}, {});", value(0, flags, e2), value(1, flags, e3));
                     break;
-                }
+                case 43:
+                    output = std::format("x[28928] = {}; x[28929] = {}; x[28930] = {}; x[28931] = {}; CallEvent({});",
+                        value(1, flags, e3), value(2, flags, e4), value(3, flags, e5), value(4, flags, e6), value(0, flags, e2));
+                    break;
+                default: break;
                 }
             }
-            line = std::format("{}{}", std::string(0, ' '), str);
         }
-        else
+        if (!output.empty())
         {
-            if (next_parameter > 0)
-            {
-                auto pos_l = line.find("(");
-                auto pos_r = line.find(")");
-                if (pos_l != std::string::npos && pos_r != std::string::npos && pos_l < pos_r)
-                {
-                    std::string params = line.substr(pos_l + 1, pos_r - pos_l - 1);
-                    std::vector<std::string> param_list = strfunc::splitString(params, ",", true);
-                    if (next_parameter > 0 && next_parameter <= param_list.size())
-                    {
-                        param_list[next_parameter - 1] = "9999999";
-                        next_parameter = -1;
-                    }
-                    auto not_space = line.find_first_not_of(" \t");
-                    str = line.substr(not_space, pos_l - not_space + 1);
-                    for (int i = 0; i < param_list.size(); i++)
-                    {
-                        std::string param = param_list[i];
-                        str += param;
-                        if (i != param_list.size() - 1)
-                        {
-                            str += ", ";
-                        }
-                    }
-                    str += line.substr(pos_r);
-                }
-                else
-                {
-                    str = line;
-                }
-            }
-            line = str;
+            auto generatedLines = strfunc::splitString(output, "\n", false);
+            outputLines.insert(outputLines.end(), generatedLines.begin(), generatedLines.end());
         }
-        strfunc::replaceOneSubStringRef(line, "9999999", "temp");
-        strfunc::replaceOneSubStringRef(line, "CheckRoleSexual(256)", "jump_flag");
-        //printf("%s\n", str.c_str());
     }
 
-    // 辅助：去除首尾空白（原地修改并返回引用）
-    auto trim = [](std::string& s) -> std::string&
+    auto trim = [](std::string value)
     {
-        auto pos = s.find_first_not_of(" \t");
-        if (pos != std::string::npos)
-        {
-            s.erase(0, pos);
-        }
-        pos = s.find_last_not_of(" \t");
-        if (pos != std::string::npos)
-        {
-            s.erase(pos + 1);
-        }
-        return s;
+        const auto first = value.find_first_not_of(" \t");
+        if (first == std::string::npos) { return std::string(); }
+        const auto last = value.find_last_not_of(" \t");
+        return value.substr(first, last - first + 1);
     };
 
-    // 辅助：对 Lua 条件取反（原地修改并返回 trim 后的值）
-    auto make_reverse = [&](std::string& s) -> std::string&
+    for (auto& line : outputLines)
     {
-        std::vector<std::pair<std::string, std::string>> opr = {
-            { "== false", "" }, { "== true", "== false" },
-            { "<=", ">" }, { "==", "~=" }, { "~=", "==" },
-            { ">=", "<" }, { "<", ">=" }, { ">", "<=" }
-        };
-        bool dealed = false;
-        for (auto& [k, v] : opr)
-        {
-            if (s.contains(k))
-            {
-                strfunc::replaceAllSubStringRef(s, k, v);
-                dealed = true;
-                break;
-            }
-        }
-        if (!dealed)
-        {
-            s = trim(s) + " == false";
-        }
-        return trim(s);
-    };
-
-    // 合并 jump_flag 条件到上一行的 if，减少中间变量
-    for (int i = 1; i < (int)lines.size(); i++)
-    {
-        auto& line = lines[i];
-        if (line.contains("jump_flag") && line.contains("if") && line.contains("then") && line.contains("goto") && !line.contains("else"))
-        {
-            auto& line0 = lines[i - 1];
-            if (line0.contains("if") && line0.contains("then"))
-            {
-                auto posif = line0.find("if");
-                auto posthen = line0.find("then");
-                auto condition = line0.substr(posif + 2, posthen - posif - 2);
-                trim(condition);
-                if (line.contains("jump_flag == false"))
-                {
-                    strfunc::replaceAllSubStringRef(line, "jump_flag == false", make_reverse(condition));
-                }
-                else
-                {
-                    strfunc::replaceAllSubStringRef(line, "jump_flag", condition);
-                }
-                line0.clear();
-            }
-        }
+        strfunc::replaceAllSubStringRef(line, "CheckRoleSexual(256)", "(x[28672] == false)");
     }
 
-    // 将向前跳转（if ... goto labelN end）转换为 if ... then ... end 结构
-    for (int i = 0; i < (int)lines.size(); i++)
+    // Case 4 stores the inverse comparison in x[28672]. The following legacy
+    // CheckRoleSexual(256) branch consumes that flag, so inline the original
+    // comparison instead of leaving an implementation-detail temporary.
+    for (size_t i = 1; i < outputLines.size(); ++i)
     {
-        auto& line = lines[i];
-        if (line.contains("if") && line.contains("goto") && !line.contains("else"))
-        {
-            auto pos_goto = line.find("goto");
-            auto pos_end = line.find("end", pos_goto);
-            auto label = line.substr(pos_goto + 4, pos_end - pos_goto - 4);
-            trim(label);
-
-            auto pos_if = line.find("if");
-            auto pos_then = line.find("then", pos_if);
-            auto condition = line.substr(pos_if + 2, pos_then - pos_if - 2);
-            trim(condition);
-
-            // 只处理向前跳转（label 出现在当前行之后）
-            for (int j = i + 1; j < (int)lines.size(); j++)
-            {
-                if (lines[j].find("::" + label + "::") != std::string::npos)
-                {
-                    lines[j] += "\nend;";
-                    line = "if " + make_reverse(condition) + " then";
-                    break;
-                }
-            }
-        }
-    }
-
-    // 合并 temp 中间变量到使用它的下一行
-    for (int i = 1; i < (int)lines.size(); i++)
-    {
-        auto& line = lines[i];
-        if (line.contains("temp"))
-        {
-            auto& line0 = lines[i - 1];
-            if (line0.contains("temp ="))
-            {
-                auto pos_eq = line0.find("=");
-                auto pos_end = line0.find(";", pos_eq);
-                auto value = line0.substr(pos_eq + 1, pos_end - pos_eq - 1);
-                trim(value);
-                strfunc::replaceAllSubStringRef(line, "temp", value);
-                line0.clear();
-            }
-        }
-    }
-
-    for (auto& line : lines)
-    {
-        if (line.empty())
+        const std::string previous = trim(outputLines[i - 1]);
+        constexpr std::string_view prefix = "x[28672] = !(";
+        if (!previous.starts_with(prefix) || !previous.ends_with(");") || !outputLines[i].contains("x[28672] == false"))
         {
             continue;
         }
-        result += line + "\n";
-    }
-    if (!result.empty() && result.back() == '\n')
-    {
-        result.pop_back();    //去掉最后一个换行符
+        const std::string comparison = previous.substr(prefix.size(), previous.size() - prefix.size() - 2);
+        strfunc::replaceAllSubStringRef(outputLines[i], "((x[28672] == false) == false)", "(!(" + comparison + "))");
+        strfunc::replaceAllSubStringRef(outputLines[i], "(x[28672] == false)", "(" + comparison + ")");
+        outputLines[i - 1].clear();
     }
 
-    // 删除转换后不再被 goto 引用的孤立标签
+    auto hasOnlyOneGoto = [&outputLines](const std::string& label)
     {
-        std::map<std::string, std::string::size_type> unused_labels;
-        std::string::size_type i = 0;
-        while (i < result.size())
+        const std::string target = "goto " + label;
+        return std::count_if(outputLines.begin(), outputLines.end(), [&target](const std::string& line)
+            { return line.contains(target); }) == 1;
+    };
+
+    for (auto& line : outputLines)
+    {
+        constexpr std::string_view prefix = "if (!(!(";
+        if (line.starts_with(prefix))
         {
-            auto pos = result.find("::", i);
-            if (pos == std::string::npos)
+            const size_t conditionEnd = line.find(")))", prefix.size());
+            if (conditionEnd != std::string::npos)
             {
-                break;
-            }
-            auto pos_end = result.find("::", pos + 2);
-            if (pos_end == std::string::npos)
-            {
-                break;
-            }
-            std::string label = result.substr(pos + 2, pos_end - pos - 2);
-            if (!result.contains("goto " + label))
-            {
-                unused_labels[label] = i;
-            }
-            i = pos_end + 2;
-        }
-        unused_labels.erase("exit");    // 不处理结束标签
-        for (const auto& [label, _] : unused_labels)
-        {
-            auto pos_label = result.find("::" + label + "::");
-            if (pos_label != std::string::npos)
-            {
-                result.erase(pos_label, label.size() + 4);
+                line = "if (" + line.substr(prefix.size(), conditionEnd - prefix.size()) + ")" + line.substr(conditionEnd + 3);
             }
         }
     }
 
-    strfunc::replaceAllSubStringRef(result, "\n\n", "\n");
-    //filefunc::writeStringToFile(result, "out.lua");
+    // A conditional forward goto with a unique target and no nested labels is a
+    // straight-line false branch. Turn it into a Cifa if block so editors can fold it.
+    for (size_t i = 0; i < outputLines.size(); ++i)
+    {
+        const std::string line = trim(outputLines[i]);
+        if (!line.starts_with("if (") || !line.ends_with(";")) { continue; }
+
+        const size_t conditionEnd = line.find(") goto ");
+        if (conditionEnd == std::string::npos) { continue; }
+        const std::string condition = line.substr(4, conditionEnd - 4);
+        const std::string label = trim(line.substr(conditionEnd + 7, line.size() - conditionEnd - 8));
+        if (label.empty() || !hasOnlyOneGoto(label)) { continue; }
+
+        const std::string labelLine = label + ":";
+        auto labelIt = std::find_if(outputLines.begin() + i + 1, outputLines.end(), [&labelLine, &trim](const std::string& candidate)
+            { return trim(candidate) == labelLine; });
+        if (labelIt == outputLines.end()) { continue; }
+
+        const size_t labelIndex = size_t(labelIt - outputLines.begin());
+        const bool hasNestedLabel = std::any_of(outputLines.begin() + i + 1, outputLines.begin() + labelIndex, [&trim](const std::string& candidate)
+            { return trim(candidate).ends_with(":"); });
+        if (hasNestedLabel) { continue; }
+
+        outputLines[i] = std::format("if (!({})) {{", condition);
+        outputLines[labelIndex] = "}";
+    }
+
+    std::string result;
+    for (const auto& line : outputLines)
+    {
+        if (!trim(line).empty())
+        {
+            result += line + "\n";
+        }
+    }
+    if (!result.empty()) { result.pop_back(); }
     return result;
 }

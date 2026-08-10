@@ -149,6 +149,16 @@ public:
     void arrangeBag();
     void clearTalkBox();
 
+    void setTeamMember(int index, int role_id);
+    int getTeamMember(int index) const;
+    void setSubMapEventData(int submap_id, int event_index, int offset, int value);
+    int getSubMapEventData(int submap_id, int event_index, int offset);
+    int getSubMapLayerData(int submap_id, int layer, int x, int y);
+    int getEventKey();
+    void drawEventImage(int type, int image_id, int x, int y);
+    void delayEvent(int milliseconds);
+    void setMainMapPosition(int x, int y);
+
     void blank() {}
 
     const std::string& getTalkContent(int talk_id)

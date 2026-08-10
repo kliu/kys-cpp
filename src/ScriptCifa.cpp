@@ -84,6 +84,7 @@ int ScriptCifa::runScript(const std::string& filename)
 int ScriptCifa::runScriptString(const std::string& content)
 {
     cifa_.set_output_error(true);
+    cifa_.register_vector("x", std::vector<int>(0x10000));
     cifa_.run_script(content);
     if (cifa_.has_error() || cifa_.has_runtime_error())
     {
@@ -425,6 +426,26 @@ int ScriptCifa::registerEventFunctions()
         return cifa::Object(item ? std::string(item->Name) : std::string());
     });
 
+    cifa_.register_function("getrolename", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        auto role = Save::getInstance()->getRole(args.empty() ? 0 : int(args[0]));
+        return cifa::Object(role ? std::string(role->Name) : std::string());
+    });
+    cifa_.register_function("getsubmapname", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        auto submap = Save::getInstance()->getSubMapInfo(args.empty() ? 0 : int(args[0]));
+        return cifa::Object(submap ? std::string(submap->Name) : std::string());
+    });
+    cifa_.register_function("getmagicname", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        auto magic = Save::getInstance()->getMagic(args.empty() ? 0 : int(args[0]));
+        return cifa::Object(magic ? std::string(magic->Name) : std::string());
+    });
+    cifa_.register_function("getshopname", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        return cifa::Object(std::string());
+    });
+
     cifa_.register_function("getteam", [](cifa::ObjectVector& args) -> cifa::Object
     {
         int index = args.empty() ? 0 : int(args[0]);
@@ -469,6 +490,51 @@ int ScriptCifa::registerEventFunctions()
     {
         int id = args.empty() ? 0 : int(args[0]);
         return cifa::Object(double(Save::getInstance()->getItemCountInBag(id)));
+    });
+
+    cifa_.register_function("setteam", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 2) { Event::getInstance()->setTeamMember(int(args[0]), int(args[1])); }
+        return {};
+    });
+    cifa_.register_function("setd", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 4) { Event::getInstance()->setSubMapEventData(int(args[0]), int(args[1]), int(args[2]), int(args[3])); }
+        return {};
+    });
+    cifa_.register_function("getd", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        return args.size() >= 3 ? cifa::Object(double(Event::getInstance()->getSubMapEventData(int(args[0]), int(args[1]), int(args[2])))) : cifa::Object(0.0);
+    });
+    cifa_.register_function("sets", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 5) { Event::getInstance()->setSubMapLayerData(int(args[0]), int(args[1]), int(args[2]), int(args[3]), int(args[4])); }
+        return {};
+    });
+    cifa_.register_function("gets", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        return args.size() >= 4 ? cifa::Object(double(Event::getInstance()->getSubMapLayerData(int(args[0]), int(args[1]), int(args[2]), int(args[3])))) : cifa::Object(0.0);
+    });
+    cifa_.register_function("getkey", [](cifa::ObjectVector&) -> cifa::Object { return cifa::Object(double(Event::getInstance()->getEventKey())); });
+    cifa_.register_function("delay", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (!args.empty()) { Event::getInstance()->delayEvent(int(args[0])); }
+        return {};
+    });
+    cifa_.register_function("drawmainimage", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 3) { Event::getInstance()->drawEventImage(0, int(args[0]), int(args[1]), int(args[2])); }
+        return {};
+    });
+    cifa_.register_function("drawheadimage", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 3) { Event::getInstance()->drawEventImage(1, int(args[0]), int(args[1]), int(args[2])); }
+        return {};
+    });
+    cifa_.register_function("setmainmapposition", [](cifa::ObjectVector& args) -> cifa::Object
+    {
+        if (args.size() >= 2) { Event::getInstance()->setMainMapPosition(int(args[0]), int(args[1])); }
+        return {};
     });
 
     return 0;

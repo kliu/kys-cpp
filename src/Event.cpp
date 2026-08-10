@@ -1251,6 +1251,77 @@ void Event::clearTalkBox()
     talk_box_down_->setContent("");
 }
 
+void Event::setTeamMember(int index, int role_id)
+{
+    if (index >= 0 && index < TEAMMATE_COUNT)
+    {
+        Save::getInstance()->Team[index] = role_id;
+    }
+}
+
+int Event::getTeamMember(int index) const
+{
+    return index >= 0 && index < TEAMMATE_COUNT ? Save::getInstance()->getTeamMateID(index) : -1;
+}
+
+void Event::setSubMapEventData(int submap_id, int event_index, int offset, int value)
+{
+    auto* event = getSubMapRecordFromID(submap_id)->Event(event_index);
+    if (event)
+    {
+        *(MAP_INT*)(event + offset) = value;
+    }
+}
+
+int Event::getSubMapEventData(int submap_id, int event_index, int offset)
+{
+    auto* event = getSubMapRecordFromID(submap_id)->Event(event_index);
+    return event ? *(MAP_INT*)(event + offset) : 0;
+}
+
+int Event::getSubMapLayerData(int submap_id, int layer, int x, int y)
+{
+    return getSubMapRecordFromID(submap_id)->LayerData(layer, x, y);
+}
+
+int Event::getEventKey()
+{
+    text_box_->setText("");
+    text_box_->setTexture("", 0);
+    const int key = text_box_->run();
+    event_node_->clear();
+    switch (key)
+    {
+    case SDLK_LEFT: return 154;
+    case SDLK_RIGHT: return 156;
+    case SDLK_UP: return 158;
+    case SDLK_DOWN: return 152;
+    default: return key;
+    }
+}
+
+void Event::drawEventImage(int type, int image_id, int x, int y)
+{
+    if (type == 0)
+    {
+        event_node_->Infos.emplace_back(DrawNode::Info{ 1, x, y, submap_id_ < 0 ? "mmap" : "smap", image_id });
+    }
+    else if (type == 1)
+    {
+        event_node_->Infos.emplace_back(DrawNode::Info{ 1, x, y, "head", image_id });
+    }
+}
+
+void Event::delayEvent(int milliseconds)
+{
+    Engine::getInstance()->delay(milliseconds);
+}
+
+void Event::setMainMapPosition(int x, int y)
+{
+    MainScene::getInstance()->setManPosition(x, y);
+}
+
 //50扩展指令
 //虽然有一定程度的支持，但是这不表示推荐使用
 void Event::instruct_50e(int code, int e1, int e2, int e3, int e4, int e5, int e6, int* code_ptr, int* code_value)

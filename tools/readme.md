@@ -22,7 +22,7 @@ xia.exe idx文件名 grp文件名 输出目录 是否拆分同编号的多张图
 
 ## trans50
 
-包含3个功能，覆盖了原sfe2kdefscript，talkmaker的功能。
+包含两个功能，覆盖了原 sfe2kdefscript、talkmaker 的资源转换用途。
 
 需注意该工具的一些激进方案转换出的脚本有可能会不能正确执行。
 
@@ -42,106 +42,25 @@ trans50 --talk --in path
 如果有其他需求请自己修改代码处理。
 
 
-### 将原版指令转为lua脚本
+### 将原版指令直接转为 Cifa 脚本
 
 ```
 trans50 --kdef --in path --talkfile talkfile --out path_out
 ```
-其中path为kdef.idx、kdef.grp所在的文件夹，talkfile为talkutf8.txt的路径，应预先生成。
+其中 `path` 为 `kdef.idx`、`kdef.grp` 所在目录，`talkfile` 为预先生成的 `talkutf8.txt` 路径。
 
-执行之后会在输出目录中的event文件夹得到所有剧情事件的 Lua 脚本。这些脚本可以供 kys-pascal 使用，也可以继续通过下面的 `lua2cifa` 转换为 kys-cpp 使用的 Cifa 脚本。
+执行后会直接在 `path_out/script/event-cifa/` 生成 `<事件编号>.c`。不生成 Lua 文件，也不经过 Lua 文本转换。条件跳转使用 Cifa 原生的 `if (...) goto label;` 与 `label:`。
 
-也可以自己修改ini文件，得到适合自己版本的脚本。
+一次 `--kdef` 调用内部包含两个转换阶段，不需要用户分别执行：`transk.cpp` 先按原始 kdef 字偏移将主指令翻译为 Cifa 文本，并处理 50/32 对后续指令参数的改写；随后 `trans50.cpp` 将 50 号扩展指令展开为等价的 Cifa 语句，并进行条件、跳转和临时变量简化。
 
-### 将50指令转成可读性稍好的程序段
-
-需注意这一步转换后的结果不保证能正确执行。
-
-```
-trans50 --50 --in path --talkfile talkfile --out path_out
-```
-path为上一步转换脚本的文件夹，talkfile为talkutf8.txt的路径。
-
-执行之后会在输出目录的event50文件夹下面得到50指令翻译后的脚本，如果原脚本不含50指令则不会有输出。
-
-此处得到的脚本更容易阅读，且大部分能被kys-pascal执行，但因一些关键字不同，不保证能完全正常执行。如有进一步需求建议自行修改相关代码。
-
-转换过程会自动将向前的 goto 跳转改写为 `if ... then ... end` 结构。向后的 goto（循环）因转换效果不稳定，建议用AI来帮忙转换成结构化的代码，或使用下面的 lua2cifa 功能进一步转换。
-
-但是需注意50指令变量所在的位置与原来不同，故不能混用转换前后的脚本。
-
-### 将 lua 事件脚本转换为 Cifa 格式
-
-Cifa 是 kys-cpp 使用的类 C 脚本格式。此步骤将上一步输出的 lua 脚本转换为更易阅读的结构化 C 风格代码，可供二次开发或人工审阅。
-
-```
-trans50 --lua2cifa --in path --out path_out
-```
-
-`path` 为 lua 脚本目录（文件名形如 `kaXXXX.lua`），`path_out` 为输出目录（会生成对应的 `XXXX.c` 文件）。也可以传入单个 `.lua` 文件路径进行单文件转换。
-
-#### 转换原理
-
-转换分为三个预处理阶段和一个主转换阶段：
-
-**预处理 B：消解 `jump_flag` 中间变量**
-
-`--50` 转换阶段会将原版比较指令展开为 `if COND then jump_flag = true; else jump_flag = false; end;`，再由后续的 `if jump_flag == false then goto label end;` 驱动跳转。预处理 B 识别此模式，将 `goto` 行直接替换为实际条件，并删除 `jump_flag` 赋值行，从而消除中间变量。
-
-**预处理 C：消解 `showmessage` 的 `jump_flag` 结果**
-
-`showmessage(...)` 调用会将用户选择结果写入 `x[28672]` 并同步设置 `jump_flag`。预处理 C 识别其后出现的 `if jump_flag == false then` 模式，替换为 `if (x[28672] != CODE)` 的显式比较。
-
-**主转换阶段**
-
-逐行将 Lua 语法映射到 Cifa/C 语法：
-
-| Lua | Cifa |
-|-----|------|
-| `if COND then` | `if (COND) {` |
-| `else` | `} else {` |
-| `end;` | `}` |
-| `repeat` | `do {` |
-| `until COND;` | `} while (NEGATE(COND));` |
-| `for VAR=A, B do` | `for (int VAR = A; VAR <= B; VAR++) {` |
-| `::label::` … `if COND then goto label end;` | `do { … } while (COND);` |
-| `or` / `and` | `\|\|` / `&&` |
-| `~=` | `!=` |
-| `-- comment` | `// comment` |
-| `EXPR == false` | `!EXPR` |
-| `EXPR == true` | `EXPR` |
-
-条件取反时优先翻转比较运算符（`!(a > b)` → `a <= b`），无法翻转时才退化为 `!(cond)` 形式。
-
-**后处理：去除函数名与括号间的多余空格**
-
-原版脚本中部分函数调用带有多余空格（如 `AskJoin ()`），后处理阶段将其收紧为 `AskJoin()`，同时保留控制流关键字后的空格（`if (`、`while (` 等不受影响）。
+可以修改 `transk.ini` 中的指令模板，适配不同资源版本。
 
 ### 批处理范例
 
 ```bat
 trans50 --talk --in %1
-trans50 --kdef --in %1 --talkfile %1/talkutf8.txt
-trans50 --50 --in ./event --talkfile %1/talkutf8.txt
+trans50 --kdef --in %1 --talkfile %1/talkutf8.txt --out path_out
 ```
-
-### 原地转换
-
-若增加overwrite参数，则会直接覆盖原文。请慎用。
-
-### 事件和对话转为lua脚本
-
-使用tools中的trans50命令行工具进行转换：
-
-可以直接调用此处的批处理，即：
-
-```
-maketalk.bat path
-make.bat path 
-```
-其中path即kdef和talk（包含idx和grp）所在的目录。
-
-50指令及转译目前不能保证正确执行。
 
 ## abc
 
@@ -246,7 +165,7 @@ void make_heads(std::string path)
 //检查3号指令的最后2个参数正确性
 void check_script(std::string path)
 ```
-只检查3号指令的最后两个参数是否合理。因修改器默认值问题，部分MOD对此参数处理有误，但DOS版的bug会使结果正确。复刻版修正了这个问题，故可能导致旧的部分剧情出错误。前述的转为lua脚本工具会处理，此处为验证。
+只检查3号指令的最后两个参数是否合理。因修改器默认值问题，部分MOD对此参数处理有误，但DOS版的bug会使结果正确。复刻版修正了这个问题，故可能导致旧的部分剧情出错误。前述的 Cifa 脚本转换工具会处理，此处为验证。
 
 ### 转换战斗帧数格式
 
