@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <map>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -108,12 +109,12 @@ void init_ins(std::string ini_file, std::string talkfile)
     }
     else
     {
-        printf("Please make talkutf8.txt first!\n");
+        std::print("Please make talkutf8.txt first!\n");
         exit(1);
     }
     if (ins_.empty())
     {
-        printf("Error of ini file!\n");
+        std::print("Error of ini file!\n");
         exit(1);
     }
 }

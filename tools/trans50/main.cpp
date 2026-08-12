@@ -1,6 +1,7 @@
 ﻿
 #include "filefunc.h"
 #include <iostream>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ int main(int argc, char* argv[])
 {
     cmdline::parser cmd;
     cmd.add("talk", '\0', "trans talk to utf-8");
-    cmd.add("kdef", '\0', "trans kdef directly to cifa (.c) event scripts");
+    cmd.add("kdef", '\0', "trans kdef directly to cifa (.cifa) event scripts");
 
     cmd.add<std::string>("in", 'i', "input path or file", false, ".");
     cmd.add<std::string>("out", 'o', "output path or file", false, ".");
@@ -66,9 +67,9 @@ int main(int argc, char* argv[])
             auto str = trans50(transk(kdef_[i]));
             if (!str.empty())
             {
-                filefunc::writeStringToFile(str, path_out + "/" + std::to_string(i) + ".c");
+                filefunc::writeStringToFile(str, path_out + "/" + std::to_string(i) + ".cifa");
             }
-            printf("%d.c\r", i);
+            std::print("{}.cifa\r", i);
         }
     }
 

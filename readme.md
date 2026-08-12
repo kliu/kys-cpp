@@ -2,7 +2,7 @@
 
 金庸群侠传复刻版，为区别于其他语言的复刻版，添加后缀cpp。
 
-除了经典的回合制战斗外，还包含半即时战斗（含进度条），以及两种完全即时战斗模式。即模仿黑帝斯和只狼的战斗系统。可以通过修改ini文件中的battle_mode来切换。
+除了经典的回合制战斗外，还包含半即时战斗（含进度条），以及两种完全即时战斗模式。即模仿黑帝斯和只狼的战斗系统。可以通过游戏中的设置选项来切换。
 
 github：https://github.com/scarsty/kys-cpp
 
@@ -10,7 +10,7 @@ github：https://github.com/scarsty/kys-cpp
 
 资源文件：<http://pan.baidu.com/s/1sl2X9wD>
 
-目前的开发分支为“纸片”，即试图营造一个真3D效果，但因素材限制，只能以纸片形式展示。
+目前的开发分支为“纸片”，即试图营造一个真3D效果，但因素材限制，只能以纸片形式展示。大致类似“纸片马力欧”和“饥荒”的效果。
 
 ## 如何编译
 
@@ -30,7 +30,7 @@ git submodule update --init --recursive
 # 可选
 git submodule update --remote --rebase --recursive
 ```
-之后使用安装了“使用 C++ 的桌面开发”工作负载的 Visual Studio 打开 `kys.sln`，编译 `x64` 配置即可。当前工程使用 v145 工具集，Visual Studio 2026 已验证；如需要 x86 版请自行修改工程。
+之后使用 Visual Studio （需安装“使用 C++ 的桌面开发”组件）打开 `kys.sln`，编译 `x64` 配置即可。当前工程使用 v145 工具集，Visual Studio 2026 已验证；如需要 x86 版请自行修改工程。
 
 macOS下可使用Homebrew安装依赖：
 ```shell
@@ -54,7 +54,7 @@ cmake --build src/build -j8
 
 编译产物为 `src/build/kys`。
 
-运行时需要提供资源目录。
+运行时需要提供资源目录，作为命令行参数。例如：
 
 ```shell
 ./src/build/kys kys-cpp-4in1/game

@@ -49,7 +49,7 @@ trans50 --kdef --in path --talkfile talkfile --out path_out
 ```
 其中 `path` 为 `kdef.idx`、`kdef.grp` 所在目录，`talkfile` 为预先生成的 `talkutf8.txt` 路径。
 
-执行后会直接在 `path_out/script/event-cifa/` 生成 `<事件编号>.c`。不生成 Lua 文件，也不经过 Lua 文本转换。条件跳转使用 Cifa 原生的 `if (...) goto label;` 与 `label:`。
+执行后会直接在 `path_out/script/event-cifa/` 生成 `<事件编号>.cifa`。不生成 Lua 文件，也不经过 Lua 文本转换。条件跳转使用 Cifa 原生的 `if (...) goto label;` 与 `label:`。
 
 一次 `--kdef` 调用内部包含两个转换阶段，不需要用户分别执行：`transk.cpp` 先按原始 kdef 字偏移将主指令翻译为 Cifa 文本，并处理 50/32 对后续指令参数的改写；随后 `trans50.cpp` 将 50 号扩展指令展开为等价的 Cifa 语句，并进行条件、跳转和临时变量简化。
 
